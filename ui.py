@@ -28,7 +28,6 @@ def main_menu(
         ],
         [
             KeyboardButton(text="👤 My Profile", style=ButtonStyle.PRIMARY),
-            KeyboardButton(text="🏆 Leaderboard", style=ButtonStyle.PRIMARY),
         ],
         [KeyboardButton(text="ℹ️ How It Works", style=ButtonStyle.SUCCESS)],
         [KeyboardButton(text=support_text, style=ButtonStyle.SUCCESS)],
