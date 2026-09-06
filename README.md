@@ -54,9 +54,9 @@ Required values:
 
 - `TELEGRAM_BOT_TOKEN`
 - `DATABASE_URL`
+- `OWNER_TELEGRAM_ID=713914937`
 
-`OWNER_TELEGRAM_ID` is optional at startup. Without it, the bot runs normally
-but the Telegram admin panel remains unavailable until the owner ID is added.
+The owner ID enables the Telegram-native admin panel and full owner access.
 
 For device verification, configure `PUBLIC_BASE_URL` or `MINIAPP_URL`. The bot
 can run without a Mini App URL, but users will not pass the device-verification
