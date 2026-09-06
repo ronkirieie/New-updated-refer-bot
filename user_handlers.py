@@ -379,7 +379,6 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
             "🎁 My Rewards",
             "📊 My Progress",
             "👤 My Profile",
-            "🏆 Leaderboard",
             "ℹ️ How It Works",
             support_text,
             "⚙️ Admin Panel",
@@ -524,13 +523,12 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
         elif message.text == "👤 My Profile":
             status = await message.answer("⠋ Loading your profile…")
 
-            async def load_profile() -> tuple[dict[str, Any], dict[str, int], int | None]:
+            async def load_profile() -> tuple[dict[str, Any], dict[str, int]]:
                 profile = await db.get_user(message.from_user.id)
                 stats = await db.referral_stats(message.from_user.id)
-                rank = await db.user_rank(message.from_user.id)
-                return profile or {}, stats, rank
+                return profile or {}, stats
 
-            user, stats, rank = await animated(
+            user, stats = await animated(
                 status,
                 load_profile,
                 "Loading your profile",
@@ -544,32 +542,9 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
                     f"Member since: <b>{user['joined_at']:%d %b %Y}</b>\n\n"
                     f"Points: <b>{user.get('points', 0)}</b>\n"
                     f"Successful referrals: <b>{stats['valid_referrals']}</b>\n"
-                    f"Leaderboard rank: <b>{rank or '—'}</b>\n"
                     f"Verification: <b>{'Active' if user.get('is_verified') else 'Pending'}</b>",
                 )
             )
-        elif message.text == "🏆 Leaderboard":
-            status = await message.answer("⠋ Loading leaderboard…")
-            rows = await animated(
-                status,
-                lambda: db.leaderboard(10),
-                "Loading leaderboard",
-                finish=False,
-            )
-            if not rows:
-                await status.edit_text(screen("Leaderboard", "No verified members yet."))
-            else:
-                lines = []
-                for row in rows:
-                    name = escape(str(row["first_name"] or "Member"))[:24]
-                    crown = "◆" if row["rank"] == 1 else "•"
-                    lines.append(
-                        f"{crown} <b>#{row['rank']}</b> {name} · "
-                        f"<b>{row['referral_count']}</b> referrals · {row['points']} pts"
-                    )
-                await status.edit_text(
-                    screen("Leaderboard", "\n".join(lines) + "\n\nInvite friends and climb the board.")
-                )
         elif message.text == "ℹ️ How It Works":
             status = await message.answer("⠋ Loading guide…")
             content = await animated(
