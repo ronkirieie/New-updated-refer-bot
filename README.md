@@ -12,7 +12,7 @@ media uploads, confirmations, message editing, and Mini App device verification.
 ## What is improved
 
 - More useful user menu: referrals, stock rewards, reward history, progress,
-  profile, leaderboard, how-it-works guide, and support.
+  profile, how-it-works guide, and support.
 - Referral sharing button with live stats, pending count, next milestone, and
   refresh action.
 - Expiring admin input sessions so an old message cannot accidentally trigger a
