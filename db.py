@@ -798,36 +798,6 @@ class Database:
                 )
         return dict(row)
 
-    async def leaderboard(self, limit: int = 10) -> list[dict[str, Any]]:
-        """Return a stable, privacy-conscious leaderboard for verified users."""
-        rows = await self._p().fetch(
-            """
-            SELECT telegram_id, first_name, username, referral_count, points,
-                   RANK() OVER (ORDER BY referral_count DESC, points DESC, joined_at ASC)::int AS rank
-            FROM users
-            WHERE is_verified AND NOT banned
-            ORDER BY referral_count DESC, points DESC, joined_at ASC
-            LIMIT $1
-            """,
-            max(1, min(50, limit)),
-        )
-        return [dict(row) for row in rows]
-
-    async def user_rank(self, user_id: int) -> int | None:
-        return await self._p().fetchval(
-            """
-            SELECT rank::int
-            FROM (
-              SELECT telegram_id,
-                     RANK() OVER (ORDER BY referral_count DESC, points DESC, joined_at ASC) AS rank
-              FROM users
-              WHERE is_verified AND NOT banned
-            ) ranked
-            WHERE telegram_id=$1
-            """,
-            user_id,
-        )
-
     async def is_admin(self, user_id: int, permission: str | None = None) -> bool:
         row = await self._p().fetchrow(
             "SELECT role, permissions FROM admins WHERE telegram_id=$1", user_id
