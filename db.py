@@ -144,6 +144,20 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ
 );
+CREATE TABLE IF NOT EXISTS broadcast_deliveries (
+  id BIGSERIAL PRIMARY KEY,
+  broadcast_id BIGINT NOT NULL REFERENCES broadcasts(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','sent','failed')),
+  error TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  sent_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (broadcast_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS broadcast_deliveries_pending_idx
+  ON broadcast_deliveries (broadcast_id, status, id);
 CREATE TABLE IF NOT EXISTS audit_logs (
   id BIGSERIAL PRIMARY KEY,
   admin_id BIGINT NOT NULL,
@@ -1827,6 +1841,72 @@ class Database:
             done,
         )
 
-    async def all_verified_users(self) -> list[int]:
-        rows = await self._p().fetch("SELECT telegram_id FROM users WHERE is_verified AND NOT banned")
-        return [row["telegram_id"] for row in rows]
+    async def prepare_broadcast_recipients(self, job_id: int) -> int:
+        """Snapshot every registered, non-banned user for a reliable broadcast."""
+        await self._p().execute(
+            """
+            INSERT INTO broadcast_deliveries (broadcast_id, user_id)
+            SELECT $1, telegram_id
+            FROM users
+            WHERE NOT banned
+            ON CONFLICT (broadcast_id, user_id) DO NOTHING
+            """,
+            job_id,
+        )
+        return int(
+            await self._p().fetchval(
+                "SELECT COUNT(*)::int FROM broadcast_deliveries WHERE broadcast_id=$1",
+                job_id,
+            )
+            or 0
+        )
+
+    async def pending_broadcast_recipients(self, job_id: int) -> list[int]:
+        rows = await self._p().fetch(
+            """
+            SELECT user_id
+            FROM broadcast_deliveries
+            WHERE broadcast_id=$1 AND status='pending'
+            ORDER BY id
+            """,
+            job_id,
+        )
+        return [int(row["user_id"]) for row in rows]
+
+    async def mark_broadcast_delivery(
+        self,
+        job_id: int,
+        user_id: int,
+        sent: bool,
+        error: str | None = None,
+    ) -> None:
+        await self._p().execute(
+            """
+            UPDATE broadcast_deliveries
+            SET status=$3,
+                error=$4,
+                attempt_count=attempt_count+1,
+                sent_at=CASE WHEN $3='sent' THEN NOW() ELSE sent_at END,
+                updated_at=NOW()
+            WHERE broadcast_id=$1 AND user_id=$2
+            """,
+            job_id,
+            user_id,
+            "sent" if sent else "failed",
+            error[:1000] if error else None,
+        )
+
+    async def broadcast_delivery_counts(self, job_id: int) -> dict[str, int]:
+        row = await self._p().fetchrow(
+            """
+            SELECT
+              COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE status='sent')::int AS sent,
+              COUNT(*) FILTER (WHERE status='failed')::int AS failed,
+              COUNT(*) FILTER (WHERE status='pending')::int AS pending
+            FROM broadcast_deliveries
+            WHERE broadcast_id=$1
+            """,
+            job_id,
+        )
+        return dict(row)
