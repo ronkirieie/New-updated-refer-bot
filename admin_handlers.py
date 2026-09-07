@@ -690,7 +690,13 @@ def setup_admin_router(
             sessions.set(admin_id, "support_setup")
             await callback.message.answer("Send: support username | support link | button text | instructions")
         elif action == "broadcast":
-            await admin_screen(callback, "Broadcast", "Send a preview, confirm it, then the queue delivers it with rate limiting.", admin_section([[("📢 Send Content", "a:broadcast_start")]]))
+            await admin_screen(
+                callback,
+                "Broadcast",
+                "Send a preview, confirm it, then the queue sends it to every registered non-banned user. "
+                "The final report shows the exact sent and not-sent counts.",
+                admin_section([[("📢 Send Content", "a:broadcast_start")]]),
+            )
         elif action == "broadcast_start":
             sessions.set(admin_id, "broadcast")
             await callback.message.answer("Send broadcast content: text, photo, video, GIF or document.")
