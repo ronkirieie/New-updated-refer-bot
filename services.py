@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import Message
 
 from db import Database
@@ -110,25 +110,45 @@ async def broadcast_loop(bot: Bot, db: Database, delay_seconds: float = 0.05) ->
             if not job:
                 await asyncio.sleep(2)
                 continue
-            users = await db.all_verified_users()
-            sent = failed = 0
-            total = len(users)
-            await db.update_broadcast(job["id"], total, sent, failed, total == 0)
-            await _broadcast_status(bot, job, total, sent, failed, total == 0)
-            for index, user_id in enumerate(users, start=1):
+            total = await db.prepare_broadcast_recipients(job["id"])
+            pending_users = await db.pending_broadcast_recipients(job["id"])
+            counts = await db.broadcast_delivery_counts(job["id"])
+            done = counts["pending"] == 0
+            await db.update_broadcast(job["id"], total, counts["sent"], counts["failed"], done)
+            await _broadcast_status(
+                bot, job, counts["total"], counts["sent"], counts["failed"], done
+            )
+            for index, user_id in enumerate(pending_users, start=1):
+                error: str | None = None
+                delivered = False
                 try:
                     await send_broadcast(bot, user_id, job)
-                    sent += 1
-                except (TelegramForbiddenError, TelegramBadRequest):
-                    failed += 1
-                except Exception:
-                    failed += 1
+                    delivered = True
+                except TelegramRetryAfter as exc:
+                    # A short retry makes rate-limit responses recoverable instead
+                    # of incorrectly counting them as permanent failures.
+                    await asyncio.sleep(float(exc.retry_after) + 0.5)
+                    try:
+                        await send_broadcast(bot, user_id, job)
+                        delivered = True
+                    except Exception as retry_exc:
+                        error = f"Retry failed: {type(retry_exc).__name__}: {retry_exc}"
+                except (TelegramForbiddenError, TelegramBadRequest) as exc:
+                    error = f"{type(exc).__name__}: {exc}"
+                except Exception as exc:
+                    error = f"{type(exc).__name__}: {exc}"
                     log.exception("Broadcast delivery failed")
+                await db.mark_broadcast_delivery(job["id"], user_id, delivered, error)
                 await asyncio.sleep(max(0.04, delay_seconds))
-                done = index == total
-                await db.update_broadcast(job["id"], total, sent, failed, done)
+                counts = await db.broadcast_delivery_counts(job["id"])
+                done = counts["pending"] == 0
+                await db.update_broadcast(
+                    job["id"], counts["total"], counts["sent"], counts["failed"], done
+                )
                 if done or index == 1 or index % max(1, total // 10) == 0:
-                    await _broadcast_status(bot, job, total, sent, failed, done)
+                    await _broadcast_status(
+                        bot, job, counts["total"], counts["sent"], counts["failed"], done
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -154,13 +174,16 @@ async def _broadcast_status(
     if done:
         text = (
             f"✓ Broadcast complete\n{progress_bar(100)}\n\n"
-            f"Delivered: <b>{sent}</b>\nFailed: <b>{failed}</b>"
+            f"Target users: <b>{total}</b>\n"
+            f"Sent successfully: <b>{sent}</b>\n"
+            f"Not sent: <b>{failed}</b>"
         )
     else:
         text = (
             f"{SPINNER_FRAMES[processed % len(SPINNER_FRAMES)]} Broadcasting…\n"
             f"{progress_bar(percent)}\n\n"
-            f"Delivered: <b>{sent}</b> · Failed: <b>{failed}</b>"
+            f"Target users: <b>{total}</b>\n"
+            f"Sent: <b>{sent}</b> · Not sent: <b>{failed}</b>"
         )
     try:
         await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
