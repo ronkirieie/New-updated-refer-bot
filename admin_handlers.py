@@ -707,26 +707,41 @@ def setup_admin_router(
                 return
 
             async def queue_broadcast() -> int:
-                job_id = await db.create_broadcast(
-                    admin_id,
-                    session["kind"],
-                    {
-                        "body": session["body"],
-                        "file_id": session["file_id"],
-                        "status_chat_id": callback.message.chat.id,
-                        "status_message_id": callback.message.message_id,
-                    },
-                )
-                await db.audit(admin_id, "broadcast_queued", "broadcast", str(job_id))
-                return job_id
+                try:
+                    return await asyncio.wait_for(
+                        db.create_broadcast(
+                            admin_id,
+                            session["kind"],
+                            {
+                                "body": session["body"],
+                                "file_id": session["file_id"],
+                                "status_chat_id": callback.message.chat.id,
+                                "status_message_id": callback.message.message_id,
+                            },
+                        ),
+                        timeout=15,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(
+                        "The database did not respond while creating the broadcast."
+                    ) from exc
 
-            job_id = await animated(
-                callback.message,
-                queue_broadcast,
-                "Queueing broadcast",
-                progress=True,
-                finish=False,
-            )
+            try:
+                job_id = await animated(
+                    callback.message,
+                    queue_broadcast,
+                    "Queueing broadcast",
+                    progress=True,
+                    finish=False,
+                )
+            except Exception:
+                await callback.message.edit_text(
+                    "⚠️ Broadcast could not be queued.\n\n"
+                    "The database did not accept the broadcast. Please try again; "
+                    "if this repeats, check the Railway database connection."
+                )
+                return
+            await db.audit(admin_id, "broadcast_queued", "broadcast", str(job_id))
             await callback.message.edit_text(
                 f"⠋ Broadcast queued as #{job_id}\n{progress_bar(0)}\n\n"
                 "Delivery will continue safely in the background."
