@@ -26,36 +26,56 @@ async def main() -> None:
         stream=sys.stdout,
     )
     polling_lock = await asyncpg.connect(settings.database_url)
+    db = Database(settings.database_url)
+    await db.connect()
+    bot = Bot(settings.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    miniapp_server = MiniAppServer(
+        db,
+        bot,
+        settings.token,
+        settings.verification_hash_secret,
+        settings.ipinfo_token,
+        settings.trust_proxy,
+        settings.verification_max_age,
+        settings.verification_rate_window,
+        settings.verification_max_attempts,
+        settings.verification_max_api_requests,
+        settings.reputation_cache_seconds,
+    )
+    worker: asyncio.Task[None] | None = None
     try:
-        lock_acquired = await polling_lock.fetchval(
-            "SELECT pg_try_advisory_lock(hashtext($1))",
-            "refer-bot-next:telegram-polling",
-        )
-        if not lock_acquired:
-            logging.getLogger(__name__).error(
-                "Another bot instance already owns the Telegram polling lock; exiting."
+        if settings.miniapp_url:
+            try:
+                # Keep health and verification available during a rolling deploy
+                # while this replica waits for the Telegram polling lock.
+                await miniapp_server.start(settings.web_host, settings.web_port)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Mini App server could not start; bot will continue"
+                )
+        else:
+            logging.getLogger(__name__).warning(
+                "MINIAPP_URL/PUBLIC_BASE_URL is not configured; "
+                "device verification will remain unavailable"
             )
-            return
 
-        db = Database(settings.database_url)
-        await db.connect()
-        bot = Bot(settings.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        lock_acquired = False
+        while not lock_acquired:
+            lock_acquired = bool(
+                await polling_lock.fetchval(
+                    "SELECT pg_try_advisory_lock(hashtext($1))",
+                    "refer-bot-next:telegram-polling",
+                )
+            )
+            if not lock_acquired:
+                logging.getLogger(__name__).warning(
+                    "Another bot instance owns the Telegram polling lock; "
+                    "waiting for it to release before starting this replica."
+                )
+                await asyncio.sleep(5)
+
         dp = Dispatcher()
-        miniapp_server = MiniAppServer(
-            db,
-            bot,
-            settings.token,
-            settings.verification_hash_secret,
-            settings.ipinfo_token,
-            settings.trust_proxy,
-            settings.verification_max_age,
-            settings.verification_rate_window,
-            settings.verification_max_attempts,
-            settings.verification_max_api_requests,
-            settings.reputation_cache_seconds,
-        )
         sessions = SessionStore(settings.session_ttl_seconds)
-        worker: asyncio.Task[None] | None = None
         broadcast_wakeup = asyncio.Event()
 
         async def wake_broadcast_worker() -> None:
@@ -74,18 +94,6 @@ async def main() -> None:
             )
         )
         try:
-            if settings.miniapp_url:
-                try:
-                    await miniapp_server.start(settings.web_host, settings.web_port)
-                except Exception:
-                    logging.getLogger(__name__).exception(
-                        "Mini App server could not start; bot will continue"
-                    )
-            else:
-                logging.getLogger(__name__).warning(
-                    "MINIAPP_URL/PUBLIC_BASE_URL is not configured; "
-                    "device verification will remain unavailable"
-                )
             await bot.delete_webhook(drop_pending_updates=False)
             await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
         finally:
