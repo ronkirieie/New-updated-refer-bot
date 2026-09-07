@@ -24,6 +24,8 @@ media uploads, confirmations, message editing, and Mini App device verification.
 - Persistent, confirmation-first broadcasts to all registered non-banned users,
   with per-user delivery tracking, retry handling, rate limiting, progress, and
   exact sent/not-sent totals.
+- PostgreSQL leader locking prevents duplicate Telegram polling while allowing
+  rolling deployments to keep the Mini App healthy until the active replica exits.
 - Telegram Mini App verification with signed init data, device/install and
   fingerprint correlation, IP/network reputation signals, rate limits, risk
   scoring, referral-cycle detection, and security alerts.
