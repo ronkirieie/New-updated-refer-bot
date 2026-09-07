@@ -428,6 +428,7 @@ class Database:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
         self.pool: asyncpg.Pool | None = None
+        self.broadcast_has_admin_telegram_id = False
         self.referral_owner_column = "referrer_id"
         self.referral_has_legacy_owner = False
         self.referral_user_column = "current_referred_id"
@@ -441,6 +442,10 @@ class Database:
             max_size=10,
             command_timeout=30,
             max_inactive_connection_lifetime=300,
+            # Railway rolling deploys can run migrations while another
+            # replica still has prepared statements for the same tables.
+            # Disabling the asyncpg statement cache avoids stale plans.
+            statement_cache_size=0,
         )
         async with self.pool.acquire() as conn:
             await conn.execute(SCHEMA)
@@ -517,6 +522,19 @@ class Database:
                 ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
                 ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
                 """
+            )
+            self.broadcast_has_admin_telegram_id = bool(
+                await conn.fetchval(
+                    """
+                    SELECT EXISTS (
+                      SELECT 1
+                      FROM information_schema.columns
+                      WHERE table_schema='public'
+                        AND table_name='broadcasts'
+                        AND column_name='admin_telegram_id'
+                    )
+                    """
+                )
             )
 
             # Existing Railway databases may have an older audit_logs table.
@@ -1845,6 +1863,15 @@ class Database:
                     "ON CONFLICT (telegram_id) DO NOTHING",
                     sender_id,
                 )
+                if self.broadcast_has_admin_telegram_id:
+                    return await conn.fetchval(
+                        "INSERT INTO broadcasts "
+                        "(admin_telegram_id,sender_id,kind,payload) "
+                        "VALUES ($1,$1,$2,$3::jsonb) RETURNING id",
+                        sender_id,
+                        kind,
+                        json.dumps(payload),
+                    )
                 return await conn.fetchval(
                     "INSERT INTO broadcasts (sender_id,kind,payload) "
                     "VALUES ($1,$2,$3::jsonb) RETURNING id",
