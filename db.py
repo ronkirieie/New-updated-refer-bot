@@ -492,6 +492,33 @@ class Database:
             """)
             await conn.execute(LEGACY_ID_MIGRATION)
 
+            # Older Railway databases may already have a broadcasts table from
+            # the first bot version. CREATE TABLE IF NOT EXISTS does not add
+            # columns to an existing table, so repair the broadcast shape
+            # explicitly before the worker or admin panel uses it.
+            await conn.execute(
+                """
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS sender_id BIGINT;
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'text';
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'queued';
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS total INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS sent INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS failed INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+                ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+                """
+            )
+            await conn.execute(
+                """
+                ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+                ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS error TEXT;
+                ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+                ALTER TABLE broadcast_deliveries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+                """
+            )
+
             # Existing Railway databases may have an older audit_logs table.
             # Add the columns used by the current bot without deleting old data.
             await conn.execute("ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS admin_id BIGINT")
@@ -1809,12 +1836,22 @@ class Database:
         return [dict(row) for row in rows]
 
     async def create_broadcast(self, sender_id: int, kind: str, payload: dict[str, Any]) -> int:
-        return await self._p().fetchval(
-            "INSERT INTO broadcasts (sender_id,kind,payload) VALUES ($1,$2,$3::jsonb) RETURNING id",
-            sender_id,
-            kind,
-            json.dumps(payload),
-        )
+        async with self._p().acquire() as conn:
+            async with conn.transaction():
+                # Keep the sender foreign key valid even when the Railway
+                # database was restored without the current admin seed row.
+                await conn.execute(
+                    "INSERT INTO admins (telegram_id, role) VALUES ($1, 'admin') "
+                    "ON CONFLICT (telegram_id) DO NOTHING",
+                    sender_id,
+                )
+                return await conn.fetchval(
+                    "INSERT INTO broadcasts (sender_id,kind,payload) "
+                    "VALUES ($1,$2,$3::jsonb) RETURNING id",
+                    sender_id,
+                    kind,
+                    json.dumps(payload),
+                )
 
     async def next_broadcast(self) -> dict[str, Any] | None:
         async with self._p().acquire() as conn:
