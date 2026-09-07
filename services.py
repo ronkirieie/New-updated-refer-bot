@@ -103,12 +103,24 @@ async def send_broadcast(bot: Bot, user_id: int, job: dict[str, Any]) -> None:
         await bot.send_message(user_id, body or "Update")
 
 
-async def broadcast_loop(bot: Bot, db: Database, delay_seconds: float = 0.05) -> None:
+async def broadcast_loop(
+    bot: Bot,
+    db: Database,
+    delay_seconds: float = 0.05,
+    wake_event: asyncio.Event | None = None,
+) -> None:
     while True:
         try:
             job = await db.next_broadcast()
             if not job:
-                await asyncio.sleep(2)
+                if wake_event is None:
+                    await asyncio.sleep(2)
+                else:
+                    try:
+                        await asyncio.wait_for(wake_event.wait(), timeout=2)
+                    except asyncio.TimeoutError:
+                        pass
+                    wake_event.clear()
                 continue
             total = await db.prepare_broadcast_recipients(job["id"])
             pending_users = await db.pending_broadcast_recipients(job["id"])
