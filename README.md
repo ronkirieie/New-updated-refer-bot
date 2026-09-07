@@ -21,7 +21,9 @@ media uploads, confirmations, message editing, and Mini App device verification.
   force-subscribe, content, broadcasts, settings, and security.
 - Audit logging for sensitive administrator changes.
 - Transactional reward and stock claims with row locks and `SKIP LOCKED`.
-- Persistent, confirmation-first broadcasts with rate limiting and progress.
+- Persistent, confirmation-first broadcasts to all registered non-banned users,
+  with per-user delivery tracking, retry handling, rate limiting, progress, and
+  exact sent/not-sent totals.
 - Telegram Mini App verification with signed init data, device/install and
   fingerprint correlation, IP/network reputation signals, rate limits, risk
   scoring, referral-cycle detection, and security alerts.
