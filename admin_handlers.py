@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from html import escape
 from typing import Any, Awaitable, Callable
 
@@ -22,6 +23,9 @@ from ui import (
     progress_bar,
     screen,
 )
+
+
+log = logging.getLogger(__name__)
 
 
 
@@ -734,11 +738,13 @@ def setup_admin_router(
                     progress=True,
                     finish=False,
                 )
-            except Exception:
+            except Exception as exc:
+                log.exception("Broadcast queue creation failed for admin %s", admin_id)
                 await callback.message.edit_text(
                     "⚠️ Broadcast could not be queued.\n\n"
-                    "The database did not accept the broadcast. Please try again; "
-                    "if this repeats, check the Railway database connection."
+                    f"Database error: <code>{type(exc).__name__}</code>\n\n"
+                    "The bot logged the full error for diagnosis. Please try again "
+                    "after the Railway deployment finishes."
                 )
                 return
             await db.audit(admin_id, "broadcast_queued", "broadcast", str(job_id))
