@@ -56,17 +56,22 @@ async def main() -> None:
         )
         sessions = SessionStore(settings.session_ttl_seconds)
         worker: asyncio.Task[None] | None = None
+        broadcast_wakeup = asyncio.Event()
 
         async def wake_broadcast_worker() -> None:
-            # The persistent queue is continuously consumed by the startup worker.
-            return None
+            broadcast_wakeup.set()
 
         dp.include_router(setup_admin_router(db, bot, sessions, wake_broadcast_worker))
         dp.include_router(
             setup_user_router(db, bot, sessions, settings.bot_name, settings.miniapp_url)
         )
         worker = asyncio.create_task(
-            broadcast_loop(bot, db, settings.broadcast_delay_seconds)
+            broadcast_loop(
+                bot,
+                db,
+                settings.broadcast_delay_seconds,
+                broadcast_wakeup,
+            )
         )
         try:
             if settings.miniapp_url:
