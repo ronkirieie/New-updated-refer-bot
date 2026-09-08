@@ -83,7 +83,7 @@ async def main() -> None:
 
         dp.include_router(setup_admin_router(db, bot, sessions, wake_broadcast_worker))
         dp.include_router(
-            setup_user_router(db, bot, sessions, settings.bot_name, settings.miniapp_url)
+            setup_user_router(db, bot, sessions, settings.bot_name, settings.miniapp_url, settings.ipinfo_token, settings.verification_hash_secret)
         )
         worker = asyncio.create_task(
             broadcast_loop(
