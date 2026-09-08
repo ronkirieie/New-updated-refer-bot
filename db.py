@@ -390,24 +390,18 @@ DEFAULT_CONTENT = {
     "error": "Something went wrong. Please try again in a moment.",
     "verification_complete": (
         "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "   ✅ VERIFICATION\n"
-        "       COMPLETE\n"
+        "      ✅ IP ACCEPTED\n"
         "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        "Your device has been successfully verified.\n\n"
-        "🔓 Access Granted\n"
-        "🛡️ Security Check Passed\n\n"
+        "Your IP has been recorded successfully.\n\n"
+        "🔓 Access Granted\n\n"
         "You can now continue using the bot."
     ),
     "verification_rejected": (
         "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "   🚫 VERIFICATION\n"
-        "        REJECTED\n"
+        "        ❌ IP REJECTED\n"
         "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        "Multiple accounts/devices linked to this verification were detected.\n\n"
-        "⚠️ Referral abuse is strictly prohibited.\n"
-        "❌ This referral has been invalidated.\n"
-        "🔒 Further attempts may be blocked.\n\n"
-        "Don't try to bypass the system."
+        "This IP cannot be used for this account.\n\n"
+        "Choose an option below."
     ),
 }
 
