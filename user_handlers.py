@@ -11,6 +11,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from db import Database
+from security import lookup_ip_reputation, normalize_ip, privacy_hash
 from services import animated, send_reward, send_stock_how_to_use
 from states import SessionStore
 from ui import (
@@ -172,17 +173,18 @@ async def _show_gate(message: Message, bot: Bot, db: Database, user: dict[str, A
         return False
     await db.mark_subscribed(user["telegram_id"])
     user = await db.get_user(user["telegram_id"]) or user
-    if not await db.device_verification_passed(user["telegram_id"]):
+    device_verified = await db.device_verification_passed(user["telegram_id"])
+    if not device_verified and not user.get("verification_skipped"):
         if not miniapp_url:
             await status.edit_text(
-                screen("Verification unavailable", "The secure device verification service is not configured yet. Please contact Support.")
+                screen("Verification unavailable", "The secure IP verification service is not configured yet. Please contact Support.")
             )
             return False
         await status.edit_text(
             screen(
-                "Verify your device",
-                "Complete the secure Telegram Mini App verification before continuing. "
-                "Your referral will only be credited after verification passes.",
+                "Verify with your IP",
+                "Open the Mini App, tap Copy IP address, return here, and paste it in this chat. "
+                "Only clean Indian IPs that have not been used before can earn referral credit.",
             ),
             reply_markup=device_verification_keyboard(miniapp_url),
         )
@@ -194,10 +196,14 @@ async def _show_gate(message: Message, bot: Bot, db: Database, user: dict[str, A
             reply_markup=disclaimer_keyboard(),
         )
         return False
-    referrer_id = await db.complete_gate(user["telegram_id"])
-    if referrer_id:
-        await _notify_referral_success(bot, db, referrer_id, user)
-    await status.edit_text("✓ Access verified.", reply_markup=None)
+    if device_verified:
+        referrer_id = await db.complete_gate(user["telegram_id"])
+        if referrer_id:
+            await _notify_referral_success(bot, db, referrer_id, user)
+        await status.edit_text("✓ Access verified and referral confirmed.", reply_markup=None)
+    else:
+        await db.activate_without_verification(user["telegram_id"])
+        await status.edit_text("✓ Access enabled. This referral will not earn a reward unless IP verification is completed.", reply_markup=None)
     return True
 
 
@@ -212,7 +218,7 @@ async def _home(message: Message, db: Database, bot_name: str, support_text: str
     )
 
 
-def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: str, miniapp_url: str = "") -> Router:
+def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: str, miniapp_url: str = "", ipinfo_token: str = "", hash_secret: str = "") -> Router:
     router = Router(name="users")
 
     async def referral_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -253,7 +259,7 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
         if (
             user["is_verified"]
             and await _refresh_verified_user(bot, db, user)
-            and await db.device_verification_passed(user["telegram_id"])
+            and (await db.device_verification_passed(user["telegram_id"]) or user.get("verification_skipped"))
         ):
             return True
         return await _show_gate(message, bot, db, user, miniapp_url)
@@ -295,31 +301,21 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
         support_text = await db.get_setting("support_button_text", "💬 Support")
         await _home(message, db, bot_name, support_text)
 
-    @router.callback_query(F.data == "u:verify")
+    @router.callback_query(F.data.in_({"u:verify", "u:verify_retry"}))
     async def verify(callback: CallbackQuery) -> None:
         await callback.answer()
         user = await db.get_user(callback.from_user.id)
-        if not user:
+        if not user or not callback.message:
             return
-        await animated(
-            callback.message,
-            lambda: _show_gate(callback.message, bot, db, user, miniapp_url),
-            "Checking subscriptions",
+        await db.clear_ip_verification_skip(callback.from_user.id)
+        if not miniapp_url:
+            await callback.message.edit_text(screen("Verification unavailable", "The IP verification service is not configured yet. Please contact Support."))
+            return
+        sessions.set(callback.from_user.id, "awaiting_ip")
+        await callback.message.edit_text(
+            screen("Paste your IP", "Open the Mini App below, tap Copy IP address, return to this chat, and paste the IP as a message."),
+            reply_markup=device_verification_keyboard(miniapp_url),
         )
-        latest = await db.get_user(callback.from_user.id)
-        if latest and latest["is_verified"]:
-            try:
-                await callback.message.edit_reply_markup(reply_markup=None)
-            except TelegramBadRequest:
-                pass
-            support_text = await db.get_setting("support_button_text", "💬 Support")
-            await callback.message.answer(
-                "✓ Access verified. Welcome in.",
-                reply_markup=main_menu(
-                    support_text,
-                    show_admin_panel=await db.is_admin(callback.from_user.id),
-                ),
-            )
 
     @router.callback_query(F.data == "u:accept")
     async def accept(callback: CallbackQuery) -> None:
@@ -340,14 +336,24 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
             )
             return
         await db.mark_subscribed(callback.from_user.id)
-        if not await db.device_verification_passed(callback.from_user.id):
+        latest = await db.get_user(callback.from_user.id) or user
+        device_verified = await db.device_verification_passed(callback.from_user.id)
+        if not device_verified and not latest.get("verification_skipped"):
+            sessions.set(callback.from_user.id, "awaiting_ip")
             if miniapp_url:
                 await callback.message.edit_text(
-                    screen("Verify your device", "Complete device verification before accepting the disclaimer."),
+                    screen("Verify with your IP", "Open the Mini App, copy your IP, and paste it here before accepting the disclaimer."),
                     reply_markup=device_verification_keyboard(miniapp_url),
                 )
             else:
-                await callback.message.edit_text("Device verification is not configured yet. Please contact Support.")
+                await callback.message.edit_text("IP verification is not configured yet. Please contact Support.")
+            return
+        if not device_verified:
+            await db.accept_disclaimer(callback.from_user.id)
+            await db.activate_without_verification(callback.from_user.id)
+            support_text = await db.get_setting("support_button_text", "💬 Support")
+            await callback.message.edit_text("✓ Accepted. Access is active, but this referral will not earn a reward without IP verification.", reply_markup=None)
+            await callback.message.answer("Choose what you want to do next.", reply_markup=main_menu(support_text, show_admin_panel=await db.is_admin(callback.from_user.id)))
             return
         support_text, is_admin, referrer_id = await animated(
             callback.message,
@@ -369,6 +375,69 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
                 show_admin_panel=is_admin,
             ),
         )
+
+    @router.message(lambda message: bool(message.text and sessions.get(message.from_user.id)))
+    async def submitted_ip(message: Message) -> None:
+        user = await db.get_user(message.from_user.id)
+        if not user or user["banned"]:
+            return
+        candidate = normalize_ip(message.text)
+        if not candidate:
+            await message.answer("Please paste the IP copied from the Mini App, or tap Try again.")
+            return
+        try:
+            import ipaddress
+            if not ipaddress.ip_address(candidate).is_global:
+                reason = "That is not a public IP address."
+            else:
+                reputation = await lookup_ip_reputation(candidate, ipinfo_token)
+                if reputation["status"] != "available":
+                    reason = "IP reputation could not be checked right now. Please try again later."
+                elif reputation.get("country") != "IN":
+                    reason = "Only Indian IP addresses are accepted."
+                elif any(bool(reputation.get(key)) for key in ("vpn", "proxy", "tor", "hosting")):
+                    reason = "VPN, proxy, Tor, and hosting IPs are not accepted."
+                else:
+                    ip_hash = privacy_hash(candidate, hash_secret)
+                    if not ip_hash:
+                        reason = "Verification is not configured correctly. Please contact Support."
+                    else:
+                        result = await db.record_ip_verification(message.from_user.id, ip_hash, reputation)
+                        if result in {"passed", "already_verified"}:
+                            sessions.clear(message.from_user.id)
+                            latest = await db.get_user(message.from_user.id) or user
+                            await message.answer("✅ IP accepted. Checking your access and referral eligibility…")
+                            if await _show_gate(message, bot, db, latest, miniapp_url):
+                                support_text = await db.get_setting("support_button_text", "💬 Support")
+                                await _home(message, db, bot_name, support_text)
+                            return
+                        if result == "duplicate_ip":
+                            reason = "This IP address has already been used for another account."
+                        else:
+                            reason = "This verification could not be completed. Please try again."
+        except Exception:
+            log.exception("Submitted IP verification failed")
+            reason = "Verification is temporarily unavailable. Please try again."
+        sessions.set(message.from_user.id, "awaiting_ip")
+        await message.answer(
+            "❌ <b>IP verification rejected</b>\n\n" + reason + "\n\nChoose an option below.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Try again", callback_data="u:verify_retry")],
+                [InlineKeyboardButton(text="➡️ Proceed without verification", callback_data="u:verify_skip")],
+            ]),
+        )
+
+    @router.callback_query(F.data == "u:verify_skip")
+    async def skip_verification(callback: CallbackQuery) -> None:
+        await callback.answer()
+        if not callback.message:
+            return
+        sessions.clear(callback.from_user.id)
+        await db.skip_ip_verification(callback.from_user.id)
+        user = await db.get_user(callback.from_user.id)
+        if user:
+            await callback.message.edit_text("Proceeding without IP verification. Referral rewards stay disabled for this account.", reply_markup=None)
+            await _show_gate(callback.message, bot, db, user, miniapp_url)
 
     @router.message(F.text)
     async def menu(message: Message) -> None:
@@ -611,7 +680,7 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
         if user["is_verified"] and not await _refresh_verified_user(bot, db, user):
             await callback.answer("Please verify your access first.", show_alert=True)
             return None
-        if not user["is_verified"] or not await db.device_verification_passed(callback.from_user.id):
+        if not user["is_verified"] or (not await db.device_verification_passed(callback.from_user.id) and not user.get("verification_skipped")):
             await callback.answer("Please verify your access first.", show_alert=True)
             return None
         if await db.get_setting("maintenance_enabled", "false") == "true" and not await db.is_admin(
