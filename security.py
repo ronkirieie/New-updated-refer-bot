@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -8,6 +9,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from urllib.parse import parse_qsl
+
 
 
 class InitDataError(ValueError):
@@ -155,3 +157,45 @@ def score_risk(
     else:
         level = "low"
     return score, level, reasons
+
+
+async def lookup_ip_reputation(ip: str, token: str, timeout_seconds: float = 3.0) -> dict[str, object]:
+    """Look up country and privacy-network signals for a user-submitted public IP."""
+    from aiohttp import ClientSession, ClientTimeout
+
+    result: dict[str, object] = {
+        "status": "not_configured" if not token else "unavailable",
+        "country": None,
+        "vpn": False,
+        "proxy": False,
+        "tor": False,
+        "hosting": False,
+        "network": None,
+    }
+    if not token:
+        return result
+    try:
+        timeout = ClientTimeout(total=timeout_seconds)
+        url = "https://ipinfo.io/" + ip + "/json?token=" + token
+        async with ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    return result
+                payload = await response.json(content_type=None)
+        privacy = payload.get("privacy") or {}
+        asn = str((payload.get("asn") or {}).get("asn") or "").strip()
+        org = str(payload.get("org") or "").strip()
+        result.update({
+            "status": "available",
+            "country": str(payload.get("country") or "").upper() or None,
+            "vpn": bool(privacy.get("vpn")),
+            "proxy": bool(privacy.get("proxy")),
+            "tor": bool(privacy.get("tor")),
+            "hosting": bool(privacy.get("hosting")),
+            "network": asn or org or None,
+        })
+    except (asyncio.TimeoutError, OSError, ValueError):
+        pass
+    except Exception:
+        pass
+    return result
