@@ -430,7 +430,7 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
             rejection_text + "\n\nChoose an option below.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Try again", callback_data="u:verify_retry")],
-                [InlineKeyboardButton(text="➡️ Proceed without verification", callback_data="u:verify_skip")],
+                [InlineKeyboardButton(text="➡️ Continue without verification", callback_data="u:verify_skip")],
             ]),
         )
 
@@ -443,7 +443,7 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
         await db.skip_ip_verification(callback.from_user.id)
         user = await db.get_user(callback.from_user.id)
         if user:
-            await callback.message.edit_text("Proceeding without IP verification. Referral rewards stay disabled for this account.", reply_markup=None)
+            await callback.message.edit_text("✅ Continued without IP verification.\n\nYou can use the bot normally, but your referrer will not receive points or rewards for this account.", reply_markup=None)
             await _show_gate(callback.message, bot, db, user, miniapp_url)
 
     @router.message(F.text)
