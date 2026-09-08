@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS users (
   is_verified BOOLEAN NOT NULL DEFAULT FALSE,
   device_verified BOOLEAN NOT NULL DEFAULT FALSE,
   device_verified_at TIMESTAMPTZ,
+  verification_ip_hash TEXT,
+  verification_skipped BOOLEAN NOT NULL DEFAULT FALSE,
   banned BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE IF NOT EXISTS referrals (
@@ -496,6 +498,9 @@ class Database:
                 $migration$;
             """)
             await conn.execute(LEGACY_ID_MIGRATION)
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_ip_hash TEXT")
+            await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_skipped BOOLEAN NOT NULL DEFAULT FALSE")
+            await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_verification_ip_unique ON users(verification_ip_hash) WHERE verification_ip_hash IS NOT NULL")
 
             # Older Railway databases may already have a broadcasts table from
             # the first bot version. CREATE TABLE IF NOT EXISTS does not add
@@ -1123,6 +1128,61 @@ class Database:
                 )
                 return {"status": final_status}
 
+    async def record_ip_verification(self, user_id: int, ip_hash: str, reputation: dict[str, object]) -> str:
+        """Atomically accept one clean, globally unique public IP."""
+        owner_expression = self._referral_owner_expression()
+        user_expression = self._referral_user_expression()
+        state_column = self._referral_state_column()
+        async with self._p().acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", "verification-ip:" + ip_hash)
+                user = await conn.fetchrow("SELECT device_verified,banned,verification_ip_hash FROM users WHERE telegram_id=$1 FOR UPDATE", user_id)
+                if not user:
+                    return "user_not_found"
+                if user["banned"]:
+                    return "banned"
+                if user["device_verified"] and user["verification_ip_hash"] == ip_hash:
+                    return "already_verified"
+                duplicate = await conn.fetchval(
+                    "SELECT telegram_id FROM users WHERE verification_ip_hash=$1 AND telegram_id<>$2 LIMIT 1",
+                    ip_hash, user_id,
+                )
+                if duplicate:
+                    await conn.execute(
+                        f"UPDATE referrals SET security_status='suspicious', {state_column}='invalid' WHERE {user_expression}=$1 AND {state_column}<>'completed'",
+                        user_id,
+                    )
+                    await conn.execute(
+                        "INSERT INTO security_events (telegram_user_id,event_type,details) VALUES ($1,$2,$3::jsonb)",
+                        user_id, "duplicate_ip_rejected", json.dumps({"ip_hash": ip_hash, "matched_user": int(duplicate)}),
+                    )
+                    return "duplicate_ip"
+                await conn.execute(
+                    "UPDATE users SET device_verified=TRUE, device_verified_at=NOW(), verification_ip_hash=$2, verification_skipped=FALSE WHERE telegram_id=$1",
+                    user_id, ip_hash,
+                )
+                await conn.execute(
+                    "INSERT INTO security_events (telegram_user_id,event_type,details) VALUES ($1,$2,$3::jsonb)",
+                    user_id, "ip_verification_passed", json.dumps({"ip_hash": ip_hash, "country": reputation.get("country"), "network": reputation.get("network")}),
+                )
+                return "passed"
+
+    async def skip_ip_verification(self, user_id: int) -> None:
+        await self._p().execute(
+            "UPDATE users SET verification_skipped=TRUE WHERE telegram_id=$1 AND device_verified=FALSE",
+            user_id,
+        )
+        await self._p().execute(
+            "INSERT INTO security_events (telegram_user_id,event_type,details) VALUES ($1,$2,'{}'::jsonb)",
+            user_id, "ip_verification_skipped",
+        )
+
+    async def clear_ip_verification_skip(self, user_id: int) -> None:
+        await self._p().execute("UPDATE users SET verification_skipped=FALSE WHERE telegram_id=$1", user_id)
+
+    async def activate_without_verification(self, user_id: int) -> None:
+        await self._p().execute("UPDATE users SET is_verified=TRUE WHERE telegram_id=$1", user_id)
+
     async def device_verification_passed(self, user_id: int) -> bool:
         return bool(await self._p().fetchval(
             "SELECT device_verified FROM users WHERE telegram_id=$1", user_id
@@ -1272,11 +1332,14 @@ class Database:
                     f"RETURNING {owner_expression} AS referrer_id",
                     user_id,
                 )
+                if not row:
+                    await conn.execute(
+                        "UPDATE users SET is_verified=TRUE WHERE telegram_id=$1", user_id
+                    )
+                    return None
                 await conn.execute(
                     "UPDATE users SET is_verified=TRUE WHERE telegram_id=$1", user_id
                 )
-                if not row:
-                    return None
                 await conn.execute(
                     "UPDATE users SET referral_count=referral_count+1, points=points+1 "
                     "WHERE telegram_id=$1",
