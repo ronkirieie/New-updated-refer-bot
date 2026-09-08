@@ -26,9 +26,9 @@ media uploads, confirmations, message editing, and Mini App device verification.
   exact sent/not-sent totals.
 - PostgreSQL leader locking prevents duplicate Telegram polling while allowing
   rolling deployments to keep the Mini App healthy until the active replica exits.
-- Telegram Mini App verification with signed init data, device/install and
-  fingerprint correlation, IP/network reputation signals, rate limits, risk
-  scoring, referral-cycle detection, and security alerts.
+- Telegram Mini App public-IP handoff: users see only their detected IP and tap
+  one copy button; the bot validates Indian location, VPN/proxy/hosting signals,
+  global IP uniqueness, retry/skip choices, and referral reward eligibility.
 - In-place spinner and progress animations without fake delays.
 
 ## Architecture
@@ -62,9 +62,10 @@ Required values:
 
 The owner ID enables the Telegram-native admin panel and full owner access.
 
-For device verification, configure `PUBLIC_BASE_URL` or `MINIAPP_URL`. The bot
-can run without a Mini App URL, but users will not pass the device-verification
-gate until it is configured.
+For IP verification, configure `PUBLIC_BASE_URL` or `MINIAPP_URL` and provide an
+`IPINFO_TOKEN`. The Mini App only displays and copies the detected public IP; the
+bot performs the India-only, VPN/proxy, and duplicate-IP checks after the user
+pastes it back into Telegram.
 
 The bot must be an administrator in every mandatory force-subscribe channel so
 Telegram can verify membership.
