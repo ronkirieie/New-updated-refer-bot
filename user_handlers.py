@@ -403,7 +403,11 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
                     if result in {"passed", "already_verified"}:
                         sessions.clear(message.from_user.id)
                         latest = await db.get_user(message.from_user.id) or user
-                        await message.answer("✅ IP accepted and recorded. Checking your access and referral eligibility…")
+                        success_content = await db.get_content("verification_complete")
+                        await message.answer(
+                            success_content["body"]
+                            or "✅ IP accepted and recorded. Checking your access and referral eligibility…"
+                        )
                         if await _show_gate(message, bot, db, latest, miniapp_url):
                             support_text = await db.get_setting("support_button_text", "💬 Support")
                             await _home(message, db, bot_name, support_text)
@@ -416,8 +420,14 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
             log.exception("Submitted IP verification failed")
             reason = "IP verification is temporarily unavailable. Please try again."
         sessions.set(message.from_user.id, "awaiting_ip")
+        rejected_content = await db.get_content("verification_rejected")
+        rejection_text = rejected_content["body"] or "❌ <b>IP verification rejected</b>"
+        if "{reason}" in rejection_text:
+            rejection_text = rejection_text.replace("{reason}", reason)
+        else:
+            rejection_text += "\n\n" + reason
         await message.answer(
-            "❌ <b>IP verification rejected</b>\n\n" + reason + "\n\nChoose an option below.",
+            rejection_text + "\n\nChoose an option below.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔄 Try again", callback_data="u:verify_retry")],
                 [InlineKeyboardButton(text="➡️ Proceed without verification", callback_data="u:verify_skip")],
