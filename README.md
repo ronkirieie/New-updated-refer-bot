@@ -62,10 +62,7 @@ Required values:
 
 The owner ID enables the Telegram-native admin panel and full owner access.
 
-For IP verification, configure `PUBLIC_BASE_URL` or `MINIAPP_URL` and provide an
-`IPINFO_TOKEN`. The Mini App only displays and copies the detected public IP; the
-bot performs the India-only, VPN/proxy, and duplicate-IP checks after the user
-pastes it back into Telegram.
+For the IP handoff, configure `PUBLIC_BASE_URL` or `MINIAPP_URL`. The Mini App displays and copies the detected public IP; the bot accepts a valid public IP, stores only a privacy-preserving hash, and rejects any IP that has already been used by another account. `IPINFO_TOKEN` is optional and is not required for this duplicate-IP check.
 
 The bot must be an administrator in every mandatory force-subscribe channel so
 Telegram can verify membership.
