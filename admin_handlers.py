@@ -628,9 +628,13 @@ def setup_admin_router(
                 "how_it_works", "reward_success", "reward_empty", "error",
                 "verification_complete", "verification_rejected",
             ]
+            labels = {
+                "verification_complete": "✅ Verified message",
+                "verification_rejected": "❌ Rejected message",
+            }
             rows = [
                 [
-                    (f"✏️ {key.replace('_',' ').title()}", f"a:cont_edit:{key}"),
+                    (f"✏️ {labels.get(key, key.replace('_',' ').title())}", f"a:cont_edit:{key}"),
                     ("👁️ Preview", f"a:cont_preview:{key}"),
                 ]
                 for key in keys
