@@ -66,7 +66,7 @@ def gate_keyboard(channels: list[dict], miniapp_url: str = "") -> InlineKeyboard
                 ]
             )
     if miniapp_url:
-        rows.append([InlineKeyboardButton(text="📱 Verify Device", web_app=WebAppInfo(url=miniapp_url))])
+        rows.append([InlineKeyboardButton(text="📍 Start IP verification", callback_data="u:verify")])
     rows.append([InlineKeyboardButton(text="✓ Verify subscription", callback_data="u:verify")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -74,8 +74,8 @@ def gate_keyboard(channels: list[dict], miniapp_url: str = "") -> InlineKeyboard
 def device_verification_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📱 Verify Device", web_app=WebAppInfo(url=miniapp_url))],
-            [InlineKeyboardButton(text="✓ Continue", callback_data="u:verify")],
+            [InlineKeyboardButton(text="📍 Open IP Mini App", web_app=WebAppInfo(url=miniapp_url))],
+            [InlineKeyboardButton(text="✓ I pasted my IP", callback_data="u:verify")],
         ]
     )
 
