@@ -75,7 +75,7 @@ def device_verification_keyboard(miniapp_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📍 Open IP Mini App", web_app=WebAppInfo(url=miniapp_url))],
-            [InlineKeyboardButton(text="✓ I pasted my IP", callback_data="u:verify")],
+            [InlineKeyboardButton(text="➡️ Continue", callback_data="u:verify")],
         ]
     )
 
