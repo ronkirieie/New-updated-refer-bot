@@ -11,7 +11,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from db import Database
-from security import lookup_ip_reputation, normalize_ip, privacy_hash
+from security import normalize_ip, privacy_hash
 from services import animated, send_reward, send_stock_how_to_use
 from states import SessionStore
 from ui import (
@@ -387,37 +387,34 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
             return
         try:
             import ipaddress
-            if not ipaddress.ip_address(candidate).is_global:
+            parsed = ipaddress.ip_address(candidate)
+            if not parsed.is_global:
                 reason = "That is not a public IP address."
             else:
-                reputation = await lookup_ip_reputation(candidate, ipinfo_token)
-                if reputation["status"] != "available":
-                    reason = "IP reputation could not be checked right now. Please try again later."
-                elif reputation.get("country") != "IN":
-                    reason = "Only Indian IP addresses are accepted."
-                elif any(bool(reputation.get(key)) for key in ("vpn", "proxy", "tor", "hosting")):
-                    reason = "VPN, proxy, Tor, and hosting IPs are not accepted."
+                ip_hash = privacy_hash(candidate, hash_secret)
+                if not ip_hash:
+                    reason = "Verification is not configured correctly. Please contact Support."
                 else:
-                    ip_hash = privacy_hash(candidate, hash_secret)
-                    if not ip_hash:
-                        reason = "Verification is not configured correctly. Please contact Support."
+                    result = await db.record_ip_verification(
+                        message.from_user.id,
+                        ip_hash,
+                        {"status": "manual", "country": None, "network": None},
+                    )
+                    if result in {"passed", "already_verified"}:
+                        sessions.clear(message.from_user.id)
+                        latest = await db.get_user(message.from_user.id) or user
+                        await message.answer("✅ IP accepted and recorded. Checking your access and referral eligibility…")
+                        if await _show_gate(message, bot, db, latest, miniapp_url):
+                            support_text = await db.get_setting("support_button_text", "💬 Support")
+                            await _home(message, db, bot_name, support_text)
+                        return
+                    if result == "duplicate_ip":
+                        reason = "This IP address has already been used for another account."
                     else:
-                        result = await db.record_ip_verification(message.from_user.id, ip_hash, reputation)
-                        if result in {"passed", "already_verified"}:
-                            sessions.clear(message.from_user.id)
-                            latest = await db.get_user(message.from_user.id) or user
-                            await message.answer("✅ IP accepted. Checking your access and referral eligibility…")
-                            if await _show_gate(message, bot, db, latest, miniapp_url):
-                                support_text = await db.get_setting("support_button_text", "💬 Support")
-                                await _home(message, db, bot_name, support_text)
-                            return
-                        if result == "duplicate_ip":
-                            reason = "This IP address has already been used for another account."
-                        else:
-                            reason = "This verification could not be completed. Please try again."
+                        reason = "This IP could not be recorded. Please try again."
         except Exception:
             log.exception("Submitted IP verification failed")
-            reason = "Verification is temporarily unavailable. Please try again."
+            reason = "IP verification is temporarily unavailable. Please try again."
         sessions.set(message.from_user.id, "awaiting_ip")
         await message.answer(
             "❌ <b>IP verification rejected</b>\n\n" + reason + "\n\nChoose an option below.",
