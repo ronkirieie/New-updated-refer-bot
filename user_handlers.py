@@ -342,7 +342,7 @@ def setup_user_router(db: Database, bot: Bot, sessions: SessionStore, bot_name: 
             sessions.set(callback.from_user.id, "awaiting_ip")
             if miniapp_url:
                 await callback.message.edit_text(
-                    screen("Verify with your IP", "Open the Mini App, copy your IP, and paste it here before accepting the disclaimer."),
+                    screen("Paste your IP", "Open the Mini App, tap Copy IP address, return here, and paste the IP. The bot checks that it is public and has not been used before."),
                     reply_markup=device_verification_keyboard(miniapp_url),
                 )
             else:
