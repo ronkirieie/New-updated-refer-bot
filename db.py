@@ -1948,7 +1948,15 @@ class Database:
                 await conn.execute(
                     "UPDATE broadcasts SET status='processing' WHERE id=$1", row["id"]
                 )
-                return dict(row)
+                job = dict(row)
+                payload = job.get("payload") or {}
+                if isinstance(payload, (str, bytes, bytearray)):
+                    try:
+                        payload = json.loads(payload)
+                    except (TypeError, ValueError):
+                        payload = {}
+                job["payload"] = payload if isinstance(payload, dict) else {}
+                return job
 
     async def update_broadcast(self, job_id: int, total: int, sent: int, failed: int, done: bool) -> None:
         await self._p().execute(
