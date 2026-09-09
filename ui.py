@@ -90,14 +90,12 @@ def disclaimer_keyboard() -> InlineKeyboardMarkup:
 
 def stock_products_keyboard(products: list[dict]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    badges = ("🟦", "🟩", "🟨", "🟪", "🟧", "🟥")
-    for index, product in enumerate(products):
-        badge = badges[index % len(badges)]
-        name = str(product["name"])[:22]
+    for product in products:
+        name = str(product["name"])[:24]
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{badge} {name} · {product['points_required']} pts · {product['available_stock']} left",
+                    text=f"{name} · {product['points_required']} pts · {product['available_stock']} left",
                     callback_data=f"u:stock:{product['id']}",
                 )
             ]
