@@ -1780,6 +1780,44 @@ class Database:
                         user_id,
                     )
 
+    async def retry_failed_stock_claim(self, claim_id: int) -> dict[str, Any] | None:
+        """Re-open a failed stock claim so an admin can retry delivery safely."""
+        async with self._p().acquire() as conn:
+            async with conn.transaction():
+                claim = await conn.fetchrow(
+                    "SELECT * FROM stock_claims WHERE id=$1 AND status='failed' FOR UPDATE",
+                    claim_id,
+                )
+                if not claim:
+                    return None
+                product = await conn.fetchrow(
+                    "SELECT * FROM stock_products WHERE id=$1 FOR UPDATE",
+                    claim["product_id"],
+                )
+                if not product:
+                    return None
+                item = None
+                if claim["item_id"]:
+                    item = await conn.fetchrow(
+                        "SELECT * FROM stock_items WHERE id=$1 FOR UPDATE",
+                        claim["item_id"],
+                    )
+                    if not item:
+                        return None
+                    await conn.execute(
+                        "UPDATE stock_items SET status='claimed' WHERE id=$1",
+                        claim["item_id"],
+                    )
+                await conn.execute(
+                    "UPDATE stock_claims SET status='reserved', error=NULL WHERE id=$1",
+                    claim_id,
+                )
+                result = dict(product)
+                if item:
+                    result.update(dict(item))
+                result.update(dict(claim))
+                return result
+
     async def user_claim_history(self, user_id: int) -> list[dict[str, Any]]:
         rows = await self._p().fetch(
             """
