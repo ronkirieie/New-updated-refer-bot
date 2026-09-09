@@ -184,7 +184,7 @@ async def _show_gate(message: Message, bot: Bot, db: Database, user: dict[str, A
             screen(
                 "Verify with your IP",
                 "Open the Mini App, tap Copy IP address, return here, and paste it in this chat. "
-                "Only clean Indian IPs that have not been used before can earn referral credit.",
+                "The bot will check that the IP is public and has not been used before.",
             ),
             reply_markup=device_verification_keyboard(miniapp_url),
         )
