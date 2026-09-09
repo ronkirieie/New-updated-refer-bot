@@ -12,7 +12,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ForceReply, Message
 
 from db import Database
-from services import animated, send_reward
+from services import animated, send_reward, send_stock_how_to_use
 from states import SessionStore
 from ui import (
     admin_home,
@@ -138,6 +138,7 @@ def setup_admin_router(
             "history": "rewards",
             "failed": "rewards",
             "retry": "rewards",
+            "retry_stock": "rewards",
             "users": "users",
             "user_search": "users",
             "user_recent": "users",
@@ -467,7 +468,7 @@ def setup_admin_router(
                 "r.name, ra.status, ra.assigned_at "
                 "FROM reward_assignments ra JOIN rewards r ON r.id=ra.reward_id "
                 "UNION ALL "
-                "SELECT 'stock'::text AS source, sc.product_id AS item_id, sc.user_id, "
+                "SELECT 'stock'::text AS source, sc.id AS item_id, sc.user_id, "
                 "sp.name, sc.status, sc.claimed_at AS assigned_at "
                 "FROM stock_claims sc JOIN stock_products sp ON sp.id=sc.product_id"
                 ") deliveries "
@@ -487,9 +488,10 @@ def setup_admin_router(
             ) or "No delivery records."
             retry_rows = (
                 [
-                    [("Retry reward " + str(r["item_id"]), f"a:retry:{r['item_id']}")]
+                    ([("Retry reward " + str(r["item_id"]), f"a:retry:{r['item_id']}")]
+                     if r["source"] == "milestone"
+                     else [("Retry stock " + str(r["item_id"]), f"a:retry_stock:{r['item_id']}")])
                     for r in rows
-                    if r["source"] == "milestone"
                 ]
                 if action == "failed"
                 else []
@@ -868,6 +870,38 @@ def setup_admin_router(
             if len(rows) == 12:
                 rows_kb.append(("Next →", f"a:logs:{page + 1}"))
             await admin_screen(callback, "Audit Logs", body, admin_section([rows_kb] if rows_kb else [], "a:home"))
+        elif action == "retry_stock" and len(parts) > 2:
+            claim_id = int(parts[2])
+
+            async def retry_stock() -> str:
+                claim = await db.retry_failed_stock_claim(claim_id)
+                if not claim:
+                    return "That failed stock delivery is no longer retryable."
+                user_id = int(claim["user_id"])
+                try:
+                    await send_reward(bot, user_id, claim)
+                    await db.mark_stock_claim(claim_id, user_id, True)
+                    try:
+                        await send_stock_how_to_use(bot, user_id, claim.get("how_to_use"))
+                    except Exception:
+                        log.exception("Unable to send stock instructions during retry %s", claim_id)
+                    result = "✓ Stock reward redelivered successfully."
+                except Exception as exc:
+                    await db.mark_stock_claim(claim_id, user_id, False, str(exc))
+                    result = "Retry attempted; stock delivery failed again and remains tracked."
+                await db.audit(admin_id, "failed_stock_retried", "stock_claim", str(claim_id))
+                return result
+
+            result = await animated(
+                callback.message,
+                retry_stock,
+                "Redelivering stock reward",
+                progress=True,
+                finish=False,
+            )
+            await callback.message.edit_text(
+                f"{result}\n{progress_bar(100 if result.startswith('✓') else 0)}"
+            )
         elif action == "retry" and len(parts) > 2:
             reward_id = int(parts[2])
 
